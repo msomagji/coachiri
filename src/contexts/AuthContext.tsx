@@ -17,65 +17,102 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  const clearAuthState = () => {
+    setUser(null);
+    setIsAdmin(false);
+  };
+
   useEffect(() => {
+    let mounted = true;
+
     const checkSession = async () => {
       try {
-        const { data: sessionData, error } = await supabase.auth.getSession();
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
         
-        if (error) {
-          console.error('Error checking session:', error.message);
+        if (sessionError) {
+          console.error('Error checking session:', sessionError.message);
+          clearAuthState();
           return;
         }
         
-        if (sessionData?.session) {
-          const { data: userData } = await supabase
+        if (session?.user && mounted) {
+          const { data: userData, error: userError } = await supabase
             .from('users')
             .select('*')
-            .eq('user_id', sessionData.session.user.id)
+            .eq('user_id', session.user.id)
             .maybeSingle();
             
-          if (userData) {
+          if (userError) {
+            console.error('Error fetching user data:', userError.message);
+            clearAuthState();
+            return;
+          }
+
+          if (userData && mounted) {
             setUser({
               user_id: userData.user_id,
               email: userData.email,
             });
           }
+        } else {
+          clearAuthState();
         }
       } catch (error) {
         console.error('Unexpected error:', error);
+        clearAuthState();
       } finally {
-        setLoading(false);
+        if (mounted) {
+          setLoading(false);
+        }
       }
     };
 
     checkSession();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session) {
-        setUser({
-          user_id: session.user.id,
-          email: session.user.email || '',
-        });
-      } else if (event === 'SIGNED_OUT') {
-        setUser(null);
-        setIsAdmin(false);
+        const { data: userData, error: userError } = await supabase
+          .from('users')
+          .select('*')
+          .eq('user_id', session.user.id)
+          .maybeSingle();
+
+        if (userError) {
+          console.error('Error fetching user data:', userError.message);
+          clearAuthState();
+          return;
+        }
+
+        if (userData) {
+          setUser({
+            user_id: session.user.id,
+            email: session.user.email || '',
+          });
+        }
+      } else if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED_ERROR') {
+        clearAuthState();
       }
     });
 
     return () => {
+      mounted = false;
       authListener?.subscription.unsubscribe();
     };
   }, []);
 
   const login = async (email: string, password: string) => {
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
       if (error) {
         return { error: error.message };
+      }
+
+      if (!data.session) {
+        return { error: 'No session created' };
       }
       
       return { error: null };
@@ -104,7 +141,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const register = async (email: string, password: string) => {
     try {
-      const { error: signUpError, data: authData } = await supabase.auth.signUp({
+      const { data: authData, error: signUpError } = await supabase.auth.signUp({
         email,
         password,
       });
@@ -122,6 +159,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
 
         if (insertError) {
+          // If user insert fails, clean up the auth user
+          await supabase.auth.signOut();
           return { error: insertError.message };
         }
 
@@ -138,9 +177,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    setIsAdmin(false);
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        console.error('Error during sign out:', error.message);
+      }
+      clearAuthState();
+    } catch (err) {
+      console.error('Unexpected error during logout:', err);
+      clearAuthState();
+    }
   };
 
   const value = {
