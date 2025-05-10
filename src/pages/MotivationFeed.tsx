@@ -7,7 +7,7 @@ import { PlusCircle } from 'lucide-react';
 import MotivationCard from '../components/motivation/MotivationCard';
 
 const MotivationFeed: React.FC = () => {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [posts, setPosts] = useState<MotivationPost[]>([]);
   const [userFavorites, setUserFavorites] = useState<UserFavorite[]>([]);
   const [loading, setLoading] = useState(true);
@@ -15,8 +15,6 @@ const MotivationFeed: React.FC = () => {
   
   useEffect(() => {
     const fetchData = async () => {
-      if (!user) return;
-      
       try {
         // Fetch motivation posts
         const { data: postsData, error: postsError } = await supabase
@@ -33,19 +31,22 @@ const MotivationFeed: React.FC = () => {
           setPosts(postsData);
         }
         
-        // Fetch user favorites
-        const { data: favoritesData, error: favoritesError } = await supabase
-          .from('user_favorites')
-          .select('*')
-          .eq('user_id', user.user_id);
-        
-        if (favoritesError) {
-          console.error('Error fetching user favorites:', favoritesError);
-          return;
-        }
-        
-        if (favoritesData) {
-          setUserFavorites(favoritesData);
+        // Only fetch favorites for regular users, not admins
+        if (user && !isAdmin) {
+          // Fetch user favorites
+          const { data: favoritesData, error: favoritesError } = await supabase
+            .from('user_favorites')
+            .select('*')
+            .eq('user_id', user.user_id);
+          
+          if (favoritesError) {
+            console.error('Error fetching user favorites:', favoritesError);
+            return;
+          }
+          
+          if (favoritesData) {
+            setUserFavorites(favoritesData);
+          }
         }
       } catch (error) {
         console.error('Unexpected error:', error);
@@ -55,21 +56,50 @@ const MotivationFeed: React.FC = () => {
     };
     
     fetchData();
-  }, [user]);
+  }, [user, isAdmin]);
   
-  const handleToggleFavorite = (postId: string, isFavorited: boolean) => {
+  const handleToggleFavorite = async (postId: string, isFavorited: boolean) => {
+    if (!user || isAdmin) return; // Don't handle favorites for admin users
+    
     if (isFavorited) {
-      // Add to local state
-      const newFavorite: UserFavorite = {
-        favorite_id: Math.random().toString(), // This is temporary, database will assign real ID
-        user_id: user?.user_id || '',
-        post_id: postId,
-        date_favorited: new Date().toISOString(),
-      };
-      setUserFavorites([...userFavorites, newFavorite]);
+      try {
+        const { data, error } = await supabase
+          .from('user_favorites')
+          .insert({
+            user_id: user.user_id,
+            post_id: postId,
+          })
+          .select()
+          .single();
+          
+        if (error) {
+          console.error('Error adding favorite:', error);
+          return;
+        }
+        
+        if (data) {
+          setUserFavorites([...userFavorites, data]);
+        }
+      } catch (error) {
+        console.error('Error adding favorite:', error);
+      }
     } else {
-      // Remove from local state
-      setUserFavorites(userFavorites.filter(fav => fav.post_id !== postId));
+      try {
+        const { error } = await supabase
+          .from('user_favorites')
+          .delete()
+          .eq('user_id', user.user_id)
+          .eq('post_id', postId);
+          
+        if (error) {
+          console.error('Error removing favorite:', error);
+          return;
+        }
+        
+        setUserFavorites(userFavorites.filter(fav => fav.post_id !== postId));
+      } catch (error) {
+        console.error('Error removing favorite:', error);
+      }
     }
   };
   
@@ -88,7 +118,7 @@ const MotivationFeed: React.FC = () => {
     );
   }
   
-  if (!user) {
+  if (!user && !isAdmin) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="text-center">
@@ -118,32 +148,34 @@ const MotivationFeed: React.FC = () => {
         </p>
       </div>
       
-      <div className="flex justify-center mb-8">
-        <div className="inline-flex rounded-md shadow-sm">
-          <button
-            type="button"
-            className={`px-4 py-2 text-sm font-medium rounded-l-md ${
-              filter === 'all'
-                ? 'bg-primary-600 text-white'
-                : 'bg-white text-gray-700 hover:bg-gray-50'
-            }`}
-            onClick={() => setFilter('all')}
-          >
-            All Posts
-          </button>
-          <button
-            type="button"
-            className={`px-4 py-2 text-sm font-medium rounded-r-md ${
-              filter === 'favorites'
-                ? 'bg-primary-600 text-white'
-                : 'bg-white text-gray-700 hover:bg-gray-50'
-            }`}
-            onClick={() => setFilter('favorites')}
-          >
-            My Favorites
-          </button>
+      {!isAdmin && (
+        <div className="flex justify-center mb-8">
+          <div className="inline-flex rounded-md shadow-sm">
+            <button
+              type="button"
+              className={`px-4 py-2 text-sm font-medium rounded-l-md ${
+                filter === 'all'
+                  ? 'bg-primary-600 text-white'
+                  : 'bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+              onClick={() => setFilter('all')}
+            >
+              All Posts
+            </button>
+            <button
+              type="button"
+              className={`px-4 py-2 text-sm font-medium rounded-r-md ${
+                filter === 'favorites'
+                  ? 'bg-primary-600 text-white'
+                  : 'bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+              onClick={() => setFilter('favorites')}
+            >
+              My Favorites
+            </button>
+          </div>
         </div>
-      </div>
+      )}
       
       {filteredPosts.length === 0 ? (
         <div className="text-center py-12 bg-white rounded-lg shadow-md">
@@ -163,7 +195,7 @@ const MotivationFeed: React.FC = () => {
             <MotivationCard
               key={post.post_id}
               post={post}
-              userId={user.user_id}
+              userId={user?.user_id}
               userFavorites={userFavorites}
               onToggleFavorite={handleToggleFavorite}
             />
@@ -173,5 +205,3 @@ const MotivationFeed: React.FC = () => {
     </div>
   );
 };
-
-export default MotivationFeed;

@@ -11,7 +11,7 @@ type MotivationPostFormData = {
 };
 
 const AdminDashboard: React.FC = () => {
-  const { user } = useAuth();
+  const { isAdmin } = useAuth();
   const [posts, setPosts] = useState<MotivationPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -51,14 +51,13 @@ const AdminDashboard: React.FC = () => {
   }, []);
   
   const onSubmit = async (data: MotivationPostFormData) => {
-    if (!user) return;
+    if (!isAdmin) return;
     
     setSubmitting(true);
     setError(null);
     
     try {
       const newPost = {
-        admin_id: user.user_id,
         content: data.content,
         image_url: data.image_url || null,
         post_date: new Date().toISOString(),
@@ -227,5 +226,3 @@ const AdminDashboard: React.FC = () => {
     </div>
   );
 };
-
-export default AdminDashboard;

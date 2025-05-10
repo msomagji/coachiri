@@ -128,10 +128,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       setIsAdmin(true);
-      setUser({
-        user_id: 'admin',
-        email: email,
-      });
+      // Don't set user state for admin login
+      setUser(null);
 
       return { error: null };
     } catch (err) {
