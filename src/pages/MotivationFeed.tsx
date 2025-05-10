@@ -205,3 +205,5 @@ const MotivationFeed: React.FC = () => {
     </div>
   );
 };
+
+export default MotivationFeed
